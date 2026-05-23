@@ -1,0 +1,30 @@
+```yaml
+name: verify
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    - name: install dependencies
+      run: |
+        pip install gspread apscheduler structlog litellm pydantic python-dotenv anthropic openpyxl SQLAlchemy asyncpg
+    - name: execute safety gates
+      env:
+        CJS_SHEET_ID: "mock"
+        ANTHROPIC_API_KEY: "mock"
+        GEMINI_API_KEY: "mock"
+        XAI_API_KEY: "mock"
+        HUB_DB_PATH: "cjs_operating_hub.db"
+      run: |
+        python verify_nexus_system.py --fast
+        if [ -f test_pipeline.py ]; then python test_pipeline.py; else echo "Optional test_pipeline.py not committed yet — skipping simulation check"; fi
+
+```
