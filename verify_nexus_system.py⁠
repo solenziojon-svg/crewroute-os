@@ -1,4 +1,12 @@
+```python
 #!/usr/bin/env python3
+"""
+verify_nexus_system.py (v1.0 - DEFINITIVE CI/CD GATE)
+─────────────────────────────────────────────────────
+Automated safety suite enforcing strict system runtime checks.
+Exits with code 0 on absolute success; exits with code 1 to block bad deployments.
+"""
+
 import os
 import sys
 import json
@@ -77,3 +85,6 @@ if __name__ == "__main__":
     parser.add_argument("--fast", action="store_true")
     args = parser.parse_args()
     VerificationEngine(fast_mode=args.fast).run_suite()
+
+```
+
