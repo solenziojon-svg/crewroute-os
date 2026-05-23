@@ -139,6 +139,20 @@ class SheetsClient:
     def sheet_url(self) -> str: return f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/edit"
 
 
+def _shape_for_make(plan_dict: dict) -> dict:
+    """Filter payload keys to enforce the airtable_payload_map.json contract strictly."""
+    AIRTABLE_JOB_KEYS = {"id", "client", "crew", "window", "job_type", "value", "assignment_reason", "drive_note"}
+    return {
+        "date":        plan_dict.get("date"),
+        "crew":        plan_dict.get("crew"),
+        "total_value": plan_dict.get("total_value"),
+        "ordered_jobs": [
+            {k: v for k, v in job.items() if k in AIRTABLE_JOB_KEYS}
+            for job in plan_dict.get("ordered_jobs", [])
+        ],
+    }
+
+
 # ── Claude's Webhook Dispatcher (Zero-Dependency) ─────────────
 async def dispatch_to_make(route_plan_dict: dict, timeout_secs: int = 15) -> bool:
     webhook_url = os.getenv("MAKE_WEBHOOK_URL", "").strip()
@@ -229,10 +243,12 @@ async def run_pipeline(target_date: Optional[str] = None, crew_filter: Optional[
         try: sc.write_route_plan(plan)
         except Exception as e: log.error("sheets.write_failed", error=str(e))
     
-    # ── Dispatch to Make.com Webhook Gateway ──────────────────
+    # ── Dispatch to Make.com Webhook (Leak 4 Resolved) ────────
     if not dry_run:
         import dataclasses
-        webhook_ok = await dispatch_to_make(dataclasses.asdict(plan))
+        plan_dict = dataclasses.asdict(plan)
+        shaped_payload = _shape_for_make(plan_dict)
+        webhook_ok = await dispatch_to_make(shaped_payload)
         if not webhook_ok:
             log.warning("pipeline.webhook_not_delivered")
             
@@ -248,15 +264,21 @@ async def run_pipeline(target_date: Optional[str] = None, crew_filter: Optional[
         try: sc.write_run_log(res, crew_filter or "all", target_date)
         except Exception as e: log.warning("log.failed", error=str(e))
 
-    # ── Mobile Dispatch Alerts ────────────────────────────────
-    try:
-        from alerts import send_run_summary, send_governor_alert
-        if not dry_run:
-            if res.success:
-                send_run_summary(res)
-            send_governor_alert(res)
-    except Exception as e:
-        log.warning("alerts.send_failed", error=str(e))
+    # ── Mobile Dispatch Alerts Wiring (Leak 3 Resolved) ───────
+    if not dry_run:
+        try:
+            from alerts import dispatch_alert
+            verdict_status = governor_data.get("status", "unknown")
+            if verdict_status in ("yellow", "red") or res.success:
+                await dispatch_alert(
+                    title=f"CrewRoute {target_date} — {verdict_status.upper()}",
+                    body=res.plan.summary if res.plan and res.plan.summary else f"Jobs loaded: {res.jobs_loaded}. Value: ${res.plan.total_value if res.plan else 0}",
+                    status=verdict_status,
+                )
+        except ImportError:
+            log.warning("alerts.import_failed", detail="alerts.py missing or failed to import dispatch_alert")
+        except Exception as e:
+            log.warning("alerts.send_failed", error=str(e))
 
     return res
 
@@ -309,4 +331,3 @@ async def main():
 if __name__ == "__main__": asyncio.run(main())
 
 ```
-
