@@ -1,14 +1,15 @@
 ```python
 """
-crewroute_agents.py (v1.3 - DEFINITIVE)
+crewroute_agents.py (v1.4 - PRODUCTION GATED)
 ─────────────────────────────────────────────────────
 Orchestrates crew routing logic through the Unified AI Nexus client.
-Bridges OptimizerAgent and GovernorAgent to the live database telemetry schemas.
+Bridges OptimizerAgent and GovernorAgent using modular directory prompts.
 """
 
 import asyncio
 import json
 import logging
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -21,10 +22,20 @@ class AgentResult:
     model_used: str = "hybrid_debate"
     error: str = ""
 
+def _load_prompt(filename: str, fallback_prompt: str) -> str:
+    """Reads system instructions and templates directly from the version-controlled prompts directory."""
+    path = Path(__file__).parent / "prompts" / filename
+    try:
+        if path.exists():
+            return path.read_text(encoding="utf-8").strip()
+    except Exception as e:
+        logger.warning(f"agents.prompt_read_error", file=filename, error=str(e))
+    logger.warning(f"agents.prompt_fallback_triggered", file=filename)
+    return fallback_prompt
+
 class OptimizerAgent:
     def __init__(self, hub_path: str):
         self.hub_path = hub_path
-        # Direct import mapping to the master AI Nexus
         try:
             from empire_ai_nexus import EmpireAINexus
             self.nexus = EmpireAINexus()
@@ -42,17 +53,25 @@ class OptimizerAgent:
             urgency_ratio = late_or_risk_count / len(jobs) if jobs else 0
             use_debate = urgency_ratio >= 0.40
             
-            base_prompt = (
-                f"Optimize routing for crew '{crew}' on {target_date}.\n"
-                f"Jobs array ledger:\n{json.dumps(jobs, indent=2)}\n\n"
-                f"Output ONLY valid raw JSON:\n"
-                f"{{\n  \"ordered_jobs\": [ {{\"id\": \"...\", \"client\": \"...\", \"assignment_reason\": \"...\", \"drive_note\": \"...\"}} ],\n"
-                f"  \"time_saved_mins\": 60, \"total_value\": 1000\n}}"
+            # Single optimizer fallback baseline
+            inline_default_optimizer = (
+                "Optimize routing for crew '{crew}' on {target_date}.\n"
+                "Jobs array ledger:\n{jobs_json}\n\n"
+                "Output ONLY valid raw JSON:\n"
+                "{{\n  \"ordered_jobs\": [ {{\"id\": \"...\", \"client\": \"...\", \"assignment_reason\": \"...\", \"drive_note\": \"...\"}} ],\n"
+                "  \"time_saved_mins\": 60, \"total_value\": 1000\n}}"
+            )
+            
+            optimizer_template = _load_prompt("optimizer_system.txt", inline_default_optimizer)
+            base_prompt = optimizer_template.format(
+                crew=crew,
+                target_date=target_date,
+                jobs_json=json.dumps(jobs, indent=2)
             )
 
             if use_debate:
                 raw_output = await self._execute_parallel_debate(base_prompt, crew, target_date)
-                model_identifier = "Multi-Model Debate Block (v1.3)"
+                model_identifier = "Multi-Model Debate Block (v1.4)"
             else:
                 raw_output = await self.nexus.ask_async(
                     prompt=base_prompt, 
@@ -71,7 +90,7 @@ class OptimizerAgent:
             return AgentResult(success=False, error=str(e))
 
     async def _execute_parallel_debate(self, prompt: str, crew: str, target_date: str) -> str:
-        # Step 1: Run parallel round 1 collections across all three LLM vendors
+        # Step 1: Query models concurrently
         r1_tasks = [
             self.nexus.ask_async(prompt, "claude-3-5-sonnet", task_type="debate_r1", crew_name=crew, date_target=target_date),
             self.nexus.ask_async(prompt, "grok-2", task_type="debate_r1", crew_name=crew, date_target=target_date),
@@ -80,15 +99,18 @@ class OptimizerAgent:
         r1_res = await asyncio.gather(*r1_tasks, return_exceptions=True)
         r1_responses = {k: (None if isinstance(r, Exception) else r) for k, r in zip(["claude", "grok", "gemini"], r1_res)}
 
-        # Step 2: Build feedback prompts and trigger cross-pollination debate round
+        # Step 2: Feed insights through debate guidelines file
         r2_tasks, active_agents = [], []
+        guidelines_fallback = "Review peer logs and refine the JSON routing structure accordingly."
+        debate_guidelines = _load_prompt("debate_guidelines.txt", guidelines_fallback)
+
         def build_context(curr: str):
             peers = [f"[{k.upper()}]: {v}" for k, v in r1_responses.items() if k != curr and v]
             return "\nReview peer logs:\n" + "\n".join(peers) if peers else ""
 
         for k, model_id in [("claude", "claude-3-5-sonnet"), ("grok", "grok-2"), ("gemini", "gemini-1-5-pro")]:
             if r1_responses[k]:
-                context_prompt = f"{prompt}\n{build_context(k)}\nRefine JSON."
+                context_prompt = f"{prompt}\n{build_context(k)}\n{debate_guidelines}"
                 r2_tasks.append(self.nexus.ask_async(context_prompt, model_id, task_type="debate_r2", crew_name=crew, date_target=target_date))
                 active_agents.append(k)
 
@@ -96,7 +118,10 @@ class OptimizerAgent:
         blocks = [f"[{active_agents[i].upper()}]: {r}" for i, r in enumerate(r2_res) if not isinstance(r, Exception)]
         
         # Step 3: Synthesis execution via high-tier reasoning engine (Claude Opus)
-        synthesis_prompt = f"Review the multi-agent optimization transcripts. Output only valid unified JSON:\n\n" + "\n".join(blocks)
+        synthesis_fallback = "Review the multi-agent optimization transcripts. Output only valid unified JSON."
+        debate_synthesis = _load_prompt("debate_synthesis.txt", synthesis_fallback)
+        
+        synthesis_prompt = f"{debate_synthesis}\n\nTranscripts:\n" + "\n".join(blocks)
         final = await self.nexus.ask_async(synthesis_prompt, "claude-3-opus", task_type="debate_synthesis", crew_name=crew, date_target=target_date)
         return final
 
@@ -111,7 +136,7 @@ class GovernorAgent:
         try:
             conn = sqlite3.connect(self.hub_path, timeout=10.0)
             cursor = conn.cursor()
-            cursor.execute("CREATE TABLE IF NOT EXISTS governance_verdicts (id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(8)))), run_date TEXT, crew TEXT, status TEXT, flags_json TEXT, audited_at DEFAULT (datetime('now')))")
+            cursor.execute("CREATE TABLE IF NOT EXISTS governance_verdicts (id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(8)))), run_date TEXT, crew TEXT, status TEXT, flags_json TEXT, audited_at TEXT DEFAULT (datetime('now')))")
             cursor.execute("SELECT task_id, error FROM dead_letter_queue WHERE date(created_at) = date(?) AND resolved = 0", (target_date,))
             dlq_records = cursor.fetchall()
             if dlq_records:
@@ -125,4 +150,3 @@ class GovernorAgent:
             return AgentResult(success=False, error=str(e), data={"status": "red", "flags": [str(e)], "auto_actions": []})
 
 ```
-
