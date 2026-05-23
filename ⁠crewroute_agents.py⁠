@@ -1,0 +1,118 @@
+import asyncio
+import json
+import logging
+from dataclasses import dataclass, field
+from typing import Any, Optional
+
+logger = logging.getLogger("crewroute.agents")
+
+@dataclass
+class AgentResult:
+    success: bool
+    data: dict = field(default_factory=dict)
+    model_used: str = "hybrid_debate"
+    error: str = ""
+
+class FakeNexusCore:
+    async def ask(self, prompt: str, model_override: str) -> Any:
+        from litellm import acompletion
+        model_map = {
+            "claude-3-5-sonnet": "anthropic/claude-3-5-sonnet-20241022",
+            "grok-2": "xai/grok-2",
+            "gemini-1-5-pro": "gemini/gemini-1.5-pro-latest",
+            "claude-3-opus": "anthropic/claude-3-opus-20240229"
+        }
+        target = model_map.get(model_override, model_override)
+        response = await acompletion(
+            model=target, 
+            messages=[{"role": "user", "content": prompt}],
+            timeout=30.0
+        )
+        class WrappedResponse:
+            def __init__(self, res):
+                self.content = res.choices[0].message.content
+        return WrappedResponse(response)
+
+class OptimizerAgent:
+    def __init__(self, hub_path: str):
+        self.hub_path = hub_path
+        self.nexus = FakeNexusCore()
+
+    async def run(self, jobs: list[dict], crew: str, target_date: str) -> AgentResult:
+        try:
+            late_or_risk_count = sum(1 for j in jobs if j.get("urgency") in ("late", "risk"))
+            urgency_ratio = late_or_risk_count / len(jobs) if jobs else 0
+            use_debate = urgency_ratio >= 0.40
+            
+            base_prompt = (
+                f"Optimize routing for crew '{crew}' on {target_date}.\n"
+                f"Jobs array ledger:\n{json.dumps(jobs, indent=2)}\n\n"
+                f"Output ONLY valid raw JSON:\n"
+                f"{{\n  \"ordered_jobs\": [ {{\"id\": \"...\", \"client\": \"...\", \"assignment_reason\": \"...\", \"drive_note\": \"...\"}} ],\n"
+                f"  \"time_saved_mins\": 60, \"total_value\": 1000\n}}"
+            )
+
+            if use_debate:
+                raw_output = await self._execute_parallel_debate(base_prompt)
+                model_identifier = "Multi-Model Debate Block (v1.3)"
+            else:
+                res = await self.nexus.ask(base_prompt, model_override="claude-3-5-sonnet")
+                raw_output = res.content
+                model_identifier = "claude-3-5-sonnet"
+
+            cleaned = raw_output.strip().removeprefix("```json").removesuffix("```").strip()
+            parsed_data = json.loads(cleaned)
+            parsed_data["debate_used"] = use_debate
+            return AgentResult(success=True, data=parsed_data, model_used=model_identifier)
+        except Exception as e:
+            return AgentResult(success=False, error=str(e))
+
+    async def _execute_parallel_debate(self, prompt: str) -> str:
+        r1_tasks = [
+            self.nexus.ask(prompt, model_override="claude-3-5-sonnet"),
+            self.nexus.ask(prompt, model_override="grok-2"),
+            self.nexus.ask(prompt, model_override="gemini-1-5-pro")
+        ]
+        r1_res = await asyncio.gather(*r1_tasks, return_exceptions=True)
+        r1_responses = {k: (None if isinstance(r, Exception) else r.content) for k, r in zip(["claude", "grok", "gemini"], r1_res)}
+
+        r2_tasks, active_agents = [], []
+        def build_context(curr: str):
+            peers = [f"[{k.upper()}]: {v}" for k, v in r1_responses.items() if k != curr and v]
+            return "\nReview peer logs:\n" + "\n".join(peers) if peers else ""
+
+        for k, model in [("claude", "claude-3-5-sonnet"), ("grok", "grok-2"), ("gemini", "gemini-1-5-pro")]:
+            if r1_responses[k]:
+                r2_tasks.append(self.nexus.ask(f"{prompt}\n{build_context(k)}\nRefine JSON.", model_override=model))
+                active_agents.append(k)
+
+        r2_res = await asyncio.gather(*r2_tasks, return_exceptions=True)
+        blocks = [f"[{active_agents[i].upper()}]: {r.content}" for i, r in enumerate(r2_res) if not isinstance(r, Exception)]
+        
+        synthesis_prompt = f"Review the multi-agent optimization transcripts. Output only valid unified JSON:\n\n" + "\n".join(blocks)
+        final = await self.nexus.ask(synthesis_prompt, model_override="claude-3-opus")
+        return final.content
+
+class GovernorAgent:
+    def __init__(self, hub_path: str):
+        self.hub_path = hub_path
+
+    async def evaluate(self, target_date: str, crew: Optional[str] = None) -> AgentResult:
+        import sqlite3
+        flags, auto_actions = [], []
+        status = "green"
+        try:
+            conn = sqlite3.connect(self.hub_path, timeout=10.0)
+            cursor = conn.cursor()
+            cursor.execute("CREATE TABLE IF NOT EXISTS governance_verdicts (id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(8)))), run_date TEXT, crew TEXT, status TEXT, flags_json TEXT, audited_at TEXT DEFAULT (datetime('now')))")
+            cursor.execute("SELECT task_id, error FROM dead_letter_queue WHERE date(created_at) = date(?) AND resolved = 0", (target_date,))
+            dlq_records = cursor.fetchall()
+            if dlq_records:
+                status = "yellow"
+                for tid, err in dlq_records:
+                    flags.append(f"DLQ Alert: {tid} failed ({err})")
+            cursor.execute("INSERT INTO governance_verdicts (run_date, crew, status, flags_json) VALUES (?, ?, ?, ?)", (target_date, crew or "all", status, json.dumps(flags)))
+            conn.commit(); conn.close()
+            return AgentResult(success=True, data={"status": status, "flags": flags, "auto_actions": auto_actions})
+        except Exception as e:
+            return AgentResult(success=False, error=str(e), data={"status": "red", "flags": [str(e)], "auto_actions": []})
