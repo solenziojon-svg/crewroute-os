@@ -1,6 +1,6 @@
 ```python
 """
-alerts.py (v1.3 - DEFINITIVE)
+alerts.py (v1.4 - PRODUCTION GATED)
 ─────────────────────────────────────────────────────
 Adaptive alerting client translating and formatting summaries 
 dynamically based on notification channels (Telegram HTML / Discord Markdown).
@@ -28,7 +28,6 @@ def _translate_html_to_markdown(html_text: str) -> str:
 
 def _send_telegram(message: str, priority: bool = False) -> bool:
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        logger.warning("Telegram credentials not set — skipping alert")
         return False
 
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -55,7 +54,6 @@ def _send_telegram(message: str, priority: bool = False) -> bool:
 
 def _send_discord(message: str, priority: bool = False) -> bool:
     if not DISCORD_WEBHOOK_URL:
-        logger.warning("Discord webhook not set — skipping alert")
         return False
 
     # Dynamically translate HTML to clean markdown for Discord display
@@ -96,6 +94,28 @@ def send_alert(message: str, priority: bool = False) -> bool:
 
     logger.warning("No notification channel configured")
     return False
+
+async def dispatch_alert(title: str, body: str, status: str = "green") -> bool:
+    """Async entry point matching the collaborator routing contract."""
+    emoji_map = {"green": "✅", "yellow": "⚠️", "red": "🚨"}
+    emoji = emoji_map.get(status.lower(), "🌿")
+    
+    formatted_message = (
+        f"{emoji} <b>{title}</b>\n\n"
+        f"{body}\n\n"
+        f"<i>Status Flag: {status.upper()}</i>"
+    )
+    
+    priority = status.lower() in ("yellow", "red")
+    
+    # Run the blocking network call safely in executor threads
+    try:
+        import asyncio
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, send_alert, formatted_message, priority)
+    except Exception as e:
+        # Fallback to direct synchronous execution
+        return send_alert(formatted_message, priority)
 
 def send_run_summary(result) -> None:
     if not result.success:
