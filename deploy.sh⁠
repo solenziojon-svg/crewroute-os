@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# ═══════════════════════════════════════════════════════════════
+#  CrewRoute Empire OS — One-Command Deployment (v4 - DEFINITIVE)
+# ═══════════════════════════════════════════════════════════════
+set -e
+
+GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; BOLD='\033[1m'; NC='\033[0m'
+ok()      { echo -e "${GREEN}✓ ${1}${NC}"; }
+warn()    { echo -e "${YELLOW}▲ ${1}${NC}"; }
+err()     { echo -e "${RED}✗ ${1}${NC}"; exit 1; }
+section() { echo -e "\n${BOLD}${YELLOW}══ ${1} ══${NC}"; }
+
+echo -e "\n${BOLD}🌿 CrewRoute Empire OS — Deploy v4${NC}\n"
+MODE=${1:-schedule}
+
+section "PRE-FLIGHT"
+command -v python3 >/dev/null 2>&1 || err "python3 not found — install Python 3.10+"
+[ -n "$CJS_SHEET_ID" ]              || warn "CJS_SHEET_ID not set — Sheets disabled"
+[ -n "$GOOGLE_CREDENTIALS_JSON" ]   || warn "GOOGLE_CREDENTIALS_JSON not set"
+ok "Environment pre-flight done (mode=$MODE)"
+
+section "DEPENDENCIES"
+pip install -q gspread apscheduler structlog litellm pydantic python-dotenv anthropic openpyxl SQLAlchemy
+ok "Python packages installed"
+
+section "VERIFICATION"
+if [ "$MODE" = "verify" ] || [ "$MODE" = "all" ]; then
+    python3 verify_nexus_system.py --fast && ok "All verification checks passed" || err "Verification failed — deployment blocked"
+else
+    for f in crewroute_daily_engine.py crewroute_agents.py; do
+        [ -f "$f" ] && ok "$f present" || warn "$f not found"
+    done
+fi
+
+section "GOOGLE SHEETS"
+if [ -n "$CJS_SHEET_ID" ] && { [ "$MODE" = "setup" ] || [ "$MODE" = "all" ]; }; then
+    python3 crewroute_daily_engine.py --setup && ok "Sheets tabs ready" || warn "Sheets setup failed"
+else
+    ok "Sheets configuration bypassed"
+fi
+
+section "STARTUP (mode=$MODE)"
+case "$MODE" in
+    setup)     ok "Setup complete." ;;
+    run)       echo "Running one-time route optimization process..."; python3 crewroute_daily_engine.py --run ;;
+    schedule|all)
+        RUN_TIME="${RUN_TIME:-06:00}"
+        echo "Starting daily live scheduler thread at ${RUN_TIME} PDT..."
+        exec python3 crewroute_daily_engine.py --schedule --time "$RUN_TIME" ;;
+    verify)    ok "Verification check complete." ;;
+    *)         echo "Usage: bash deploy.sh {setup|run|schedule|verify|all}" ;;
+esac
