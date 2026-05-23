@@ -1,3 +1,4 @@
+```python
 from __future__ import annotations
 import argparse
 import asyncio
@@ -8,6 +9,8 @@ import time
 from dataclasses import dataclass, field, asdict
 from datetime import date, datetime
 from typing import Any, Optional
+import urllib.request
+import urllib.error
 import structlog
 
 structlog.configure(
@@ -135,6 +138,64 @@ class SheetsClient:
     @property
     def sheet_url(self) -> str: return f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/edit"
 
+
+# ── Claude's Webhook Dispatcher (Zero-Dependency) ─────────────
+async def dispatch_to_make(route_plan_dict: dict, timeout_secs: int = 15) -> bool:
+    webhook_url = os.getenv("MAKE_WEBHOOK_URL", "").strip()
+    if not webhook_url:
+        log.info("webhook.skipped", reason="MAKE_WEBHOOK_URL not set")
+        return False
+    if not webhook_url.startswith("https://"):
+        log.warning("webhook.invalid_url", reason="MAKE_WEBHOOK_URL must begin with https://")
+        return False
+
+    payload = {
+        "source": "crewroute_os",
+        "schema_version": "1.0",
+        "dispatched_at": datetime.utcnow().isoformat() + "Z",
+        "route_plan": route_plan_dict,
+    }
+
+    def _blocking_post() -> tuple[int, str]:
+        body = json.dumps(payload, default=str).encode("utf-8")
+        req  = urllib.request.Request(
+            url=webhook_url,
+            data=body,
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": "CrewRoute-OS/1.0",
+                "X-Source": "crewroute_daily_engine",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=timeout_secs) as resp:
+            return resp.status, resp.read().decode("utf-8", errors="replace")
+
+    try:
+        loop = asyncio.get_running_loop()
+        status, body = await asyncio.wait_for(
+            loop.run_in_executor(None, _blocking_post),
+            timeout=timeout_secs + 2,
+        )
+        if 200 <= status < 300:
+            log.info("webhook.sent", status=status, crew=route_plan_dict.get("crew", "?"), jobs=len(route_plan_dict.get("ordered_jobs", [])))
+            return True
+        log.warning("webhook.rejected", status=status, body=body[:200])
+        return False
+    except asyncio.TimeoutError:
+        log.warning("webhook.timeout", cap_secs=timeout_secs, webhook_url=webhook_url[:60] + "...")
+        return False
+    except urllib.error.HTTPError as e:
+        log.warning("webhook.http_error", code=e.code, reason=str(e.reason)[:120])
+        return False
+    except urllib.error.URLError as e:
+        log.warning("webhook.url_error", reason=str(e.reason)[:120])
+        return False
+    except Exception as e:
+        log.error("webhook.unexpected", error=type(e).__name__, detail=str(e)[:200])
+        return False
+
+
 def _write_dlq_rows(dlq: list[dict]):
     if not dlq or not os.path.exists(HUB_PATH): return
     try:
@@ -168,6 +229,13 @@ async def run_pipeline(target_date: Optional[str] = None, crew_filter: Optional[
         try: sc.write_route_plan(plan)
         except Exception as e: log.error("sheets.write_failed", error=str(e))
     
+    # ── Dispatch to Make.com Webhook Gateway ──────────────────
+    if not dry_run:
+        import dataclasses
+        webhook_ok = await dispatch_to_make(dataclasses.asdict(plan))
+        if not webhook_ok:
+            log.warning("pipeline.webhook_not_delivered")
+            
     governor_data = {}
     try:
         governor = GovernorAgent(hub_path=HUB_PATH)
@@ -179,6 +247,17 @@ async def run_pipeline(target_date: Optional[str] = None, crew_filter: Optional[
     if not dry_run:
         try: sc.write_run_log(res, crew_filter or "all", target_date)
         except Exception as e: log.warning("log.failed", error=str(e))
+
+    # ── Mobile Dispatch Alerts ────────────────────────────────
+    try:
+        from alerts import send_run_summary, send_governor_alert
+        if not dry_run:
+            if res.success:
+                send_run_summary(res)
+            send_governor_alert(res)
+    except Exception as e:
+        log.warning("alerts.send_failed", error=str(e))
+
     return res
 
 def _get_agents():
@@ -228,3 +307,5 @@ async def main():
     print(f"Run complete. Success: {result.success}")
 
 if __name__ == "__main__": asyncio.run(main())
+
+```
