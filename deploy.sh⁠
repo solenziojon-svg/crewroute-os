@@ -1,3 +1,4 @@
+```bash
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════
 #  CrewRoute Empire OS — One-Command Deployment (v4 - DEFINITIVE)
@@ -50,3 +51,5 @@ case "$MODE" in
     verify)    ok "Verification check complete." ;;
     *)         echo "Usage: bash deploy.sh {setup|run|schedule|verify|all}" ;;
 esac
+
+```
