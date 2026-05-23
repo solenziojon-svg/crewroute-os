@@ -1,3 +1,11 @@
+```python
+"""
+crewroute_agents.py (v1.3 - DEFINITIVE)
+─────────────────────────────────────────────────────
+Orchestrates crew routing logic through the Unified AI Nexus client.
+Bridges OptimizerAgent and GovernorAgent to the live database telemetry schemas.
+"""
+
 import asyncio
 import json
 import logging
@@ -13,32 +21,22 @@ class AgentResult:
     model_used: str = "hybrid_debate"
     error: str = ""
 
-class FakeNexusCore:
-    async def ask(self, prompt: str, model_override: str) -> Any:
-        from litellm import acompletion
-        model_map = {
-            "claude-3-5-sonnet": "anthropic/claude-3-5-sonnet-20241022",
-            "grok-2": "xai/grok-2",
-            "gemini-1-5-pro": "gemini/gemini-1.5-pro-latest",
-            "claude-3-opus": "anthropic/claude-3-opus-20240229"
-        }
-        target = model_map.get(model_override, model_override)
-        response = await acompletion(
-            model=target, 
-            messages=[{"role": "user", "content": prompt}],
-            timeout=30.0
-        )
-        class WrappedResponse:
-            def __init__(self, res):
-                self.content = res.choices[0].message.content
-        return WrappedResponse(response)
-
 class OptimizerAgent:
     def __init__(self, hub_path: str):
         self.hub_path = hub_path
-        self.nexus = FakeNexusCore()
+        # Direct import mapping to the master AI Nexus
+        try:
+            from empire_ai_nexus import EmpireAINexus
+            self.nexus = EmpireAINexus()
+            self.is_connected = True
+        except ImportError:
+            self.is_connected = False
+            logger.error("agents.missing_nexus_module", detail="Verify empire_ai_nexus.py is in root.")
 
     async def run(self, jobs: list[dict], crew: str, target_date: str) -> AgentResult:
+        if not self.is_connected:
+            return AgentResult(success=False, error="Unified AI Nexus client module is missing from classpath.")
+
         try:
             late_or_risk_count = sum(1 for j in jobs if j.get("urgency") in ("late", "risk"))
             urgency_ratio = late_or_risk_count / len(jobs) if jobs else 0
@@ -53,11 +51,16 @@ class OptimizerAgent:
             )
 
             if use_debate:
-                raw_output = await self._execute_parallel_debate(base_prompt)
+                raw_output = await self._execute_parallel_debate(base_prompt, crew, target_date)
                 model_identifier = "Multi-Model Debate Block (v1.3)"
             else:
-                res = await self.nexus.ask(base_prompt, model_override="claude-3-5-sonnet")
-                raw_output = res.content
+                raw_output = await self.nexus.ask_async(
+                    prompt=base_prompt, 
+                    model_id="claude-3-5-sonnet",
+                    task_type="routing_single",
+                    crew_name=crew,
+                    date_target=target_date
+                )
                 model_identifier = "claude-3-5-sonnet"
 
             cleaned = raw_output.strip().removeprefix("```json").removesuffix("```").strip()
@@ -67,31 +70,35 @@ class OptimizerAgent:
         except Exception as e:
             return AgentResult(success=False, error=str(e))
 
-    async def _execute_parallel_debate(self, prompt: str) -> str:
+    async def _execute_parallel_debate(self, prompt: str, crew: str, target_date: str) -> str:
+        # Step 1: Run parallel round 1 collections across all three LLM vendors
         r1_tasks = [
-            self.nexus.ask(prompt, model_override="claude-3-5-sonnet"),
-            self.nexus.ask(prompt, model_override="grok-2"),
-            self.nexus.ask(prompt, model_override="gemini-1-5-pro")
+            self.nexus.ask_async(prompt, "claude-3-5-sonnet", task_type="debate_r1", crew_name=crew, date_target=target_date),
+            self.nexus.ask_async(prompt, "grok-2", task_type="debate_r1", crew_name=crew, date_target=target_date),
+            self.nexus.ask_async(prompt, "gemini-1-5-pro", task_type="debate_r1", crew_name=crew, date_target=target_date)
         ]
         r1_res = await asyncio.gather(*r1_tasks, return_exceptions=True)
-        r1_responses = {k: (None if isinstance(r, Exception) else r.content) for k, r in zip(["claude", "grok", "gemini"], r1_res)}
+        r1_responses = {k: (None if isinstance(r, Exception) else r) for k, r in zip(["claude", "grok", "gemini"], r1_res)}
 
+        # Step 2: Build feedback prompts and trigger cross-pollination debate round
         r2_tasks, active_agents = [], []
         def build_context(curr: str):
             peers = [f"[{k.upper()}]: {v}" for k, v in r1_responses.items() if k != curr and v]
             return "\nReview peer logs:\n" + "\n".join(peers) if peers else ""
 
-        for k, model in [("claude", "claude-3-5-sonnet"), ("grok", "grok-2"), ("gemini", "gemini-1-5-pro")]:
+        for k, model_id in [("claude", "claude-3-5-sonnet"), ("grok", "grok-2"), ("gemini", "gemini-1-5-pro")]:
             if r1_responses[k]:
-                r2_tasks.append(self.nexus.ask(f"{prompt}\n{build_context(k)}\nRefine JSON.", model_override=model))
+                context_prompt = f"{prompt}\n{build_context(k)}\nRefine JSON."
+                r2_tasks.append(self.nexus.ask_async(context_prompt, model_id, task_type="debate_r2", crew_name=crew, date_target=target_date))
                 active_agents.append(k)
 
         r2_res = await asyncio.gather(*r2_tasks, return_exceptions=True)
-        blocks = [f"[{active_agents[i].upper()}]: {r.content}" for i, r in enumerate(r2_res) if not isinstance(r, Exception)]
+        blocks = [f"[{active_agents[i].upper()}]: {r}" for i, r in enumerate(r2_res) if not isinstance(r, Exception)]
         
+        # Step 3: Synthesis execution via high-tier reasoning engine (Claude Opus)
         synthesis_prompt = f"Review the multi-agent optimization transcripts. Output only valid unified JSON:\n\n" + "\n".join(blocks)
-        final = await self.nexus.ask(synthesis_prompt, model_override="claude-3-opus")
-        return final.content
+        final = await self.nexus.ask_async(synthesis_prompt, "claude-3-opus", task_type="debate_synthesis", crew_name=crew, date_target=target_date)
+        return final
 
 class GovernorAgent:
     def __init__(self, hub_path: str):
@@ -104,7 +111,7 @@ class GovernorAgent:
         try:
             conn = sqlite3.connect(self.hub_path, timeout=10.0)
             cursor = conn.cursor()
-            cursor.execute("CREATE TABLE IF NOT EXISTS governance_verdicts (id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(8)))), run_date TEXT, crew TEXT, status TEXT, flags_json TEXT, audited_at TEXT DEFAULT (datetime('now')))")
+            cursor.execute("CREATE TABLE IF NOT EXISTS governance_verdicts (id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(8)))), run_date TEXT, crew TEXT, status TEXT, flags_json TEXT, audited_at DEFAULT (datetime('now')))")
             cursor.execute("SELECT task_id, error FROM dead_letter_queue WHERE date(created_at) = date(?) AND resolved = 0", (target_date,))
             dlq_records = cursor.fetchall()
             if dlq_records:
@@ -116,3 +123,6 @@ class GovernorAgent:
             return AgentResult(success=True, data={"status": status, "flags": flags, "auto_actions": auto_actions})
         except Exception as e:
             return AgentResult(success=False, error=str(e), data={"status": "red", "flags": [str(e)], "auto_actions": []})
+
+```
+
