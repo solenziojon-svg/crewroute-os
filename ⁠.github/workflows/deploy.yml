@@ -1,0 +1,69 @@
+name: CrewRoute OS — Deploy to Railway
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  verify-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -q \
+            gspread apscheduler structlog litellm \
+            anthropic pydantic python-dotenv \
+            fastapi uvicorn sqlalchemy asyncpg
+
+      - name: Initialize Empire Hub schema
+        run: |
+          python3 -c "
+          import sys
+          sys.path.insert(0, '.')
+          try:
+              from cjs_operating_hub import EmpireHub
+              with EmpireHub('/tmp/test_hub.db') as hub:
+                  hub.init_schema()
+              print('✅ EmpireHub schema OK')
+          except Exception as e:
+              print(f'❌ Hub schema failed: {e}')
+              sys.exit(1)
+          "
+
+      - name: Syntax check all Python files
+        run: |
+          echo "Checking Python syntax..."
+          for f in *.py; do
+            python3 -c "
+          import ast, sys
+          try:
+              with open('$f') as fh: ast.parse(fh.read())
+              print(f'  ✅ $f')
+          except SyntaxError as e:
+              print(f'  ❌ $f — {e}')
+              sys.exit(1)
+          "
+          done
+
+      - name: Deploy to Railway
+        if: github.ref == 'refs/heads/main' && success()
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          if [ -n "$RAILWAY_TOKEN" ]; then
+            npm install -g @railway/cli
+            railway up --detach
+            echo "✅ Deployed to Railway"
+          else
+            echo "⚠️  RAILWAY_TOKEN not set — skipping Railway deploy"
+          fi
