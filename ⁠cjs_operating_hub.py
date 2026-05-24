@@ -1,80 +1,61 @@
-```python
-"""
-cjs_operating_hub.py (v1.4 - PRODUCTION GATED)
-─────────────────────────────────────────────────────
-Central database manager for CJS Landscape Solutions operational data.
-Ensures schema updates to schema/sqlite_schema.sql apply automatically.
-"""
-
-import os
 import sqlite3
 import logging
-from pathlib import Path
-from typing import Any, Dict, List, Optional
+import os
 
-logger = logging.getLogger("crewroute.hub")
+# ── Configuration ──
+DB_PATH = os.getenv("HUB_DB_PATH", "cjs_operating_hub.db")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
+logger = logging.getLogger("empire.hub")
+
+# ── Single Source of Truth Schema ──
+SCHEMA = """
+PRAGMA journal_mode=WAL;
+PRAGMA foreign_keys=ON;
+
+CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, date TEXT, client TEXT, status TEXT DEFAULT 'scheduled');
+CREATE TABLE IF NOT EXISTS performance_metrics (id TEXT PRIMARY KEY, date TEXT, crew TEXT, planned_duration_mins INTEGER, actual_duration_mins INTEGER);
+CREATE TABLE IF NOT EXISTS empire_nexus (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_type TEXT NOT NULL, 
+    source_id TEXT NOT NULL, 
+    target_type TEXT NOT NULL, 
+    target_id TEXT NOT NULL, 
+    insight_score INTEGER DEFAULT 0, 
+    reviewed INTEGER DEFAULT 0, 
+    created_at TEXT DEFAULT (datetime('now'))
+);
+"""
 
 class EmpireHub:
-    def __init__(self, db_path: Optional[str] = None):
-        self.db_path = db_path or os.getenv("HUB_DB_PATH", "cjs_operating_hub.db")
-        self.db_url = os.getenv("DATABASE_URL", "")
-        self._init_sqlite_db()
+    """
+    The Single Data Hub for CrewRoute OS. 
+    Usage: with EmpireHub() as hub: hub.write_nexus_link(...)
+    """
+    def __init__(self, db_file=DB_PATH):
+        self.db_file = db_file
+    
+    def __enter__(self):
+        self.conn = sqlite3.connect(self.db_file, timeout=15)
+        self.conn.row_factory = sqlite3.Row
+        self.conn.executescript(SCHEMA) # Auto-init schema
+        return self
 
-    def _init_sqlite_db(self):
-        """Initializes database schema from file or inline fallback."""
-        try:
-            conn = sqlite3.connect(self.db_path, timeout=10.0)
-            
-            # Locate schema path relative to project root
-            schema_path = Path(__file__).parent / "schema" / "sqlite_schema.sql"
-            
-            if schema_path.exists():
-                schema_sql = schema_path.read_text(encoding="utf-8")
-                conn.executescript(schema_sql)
-                logger.info("hub.schema_initialized", source="sqlite_schema.sql")
-            else:
-                # Safe inline fallback if directory path is missing
-                conn.executescript("""
-                    CREATE TABLE IF NOT EXISTS dead_letter_queue (
-                        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(8)))),
-                        agent_name TEXT,
-                        task_id TEXT,
-                        input_json TEXT,
-                        error TEXT,
-                        retry_count INTEGER DEFAULT 0,
-                        resolved INTEGER DEFAULT 0,
-                        created_at TEXT DEFAULT (datetime('now'))
-                    );
-                    CREATE TABLE IF NOT EXISTS governance_verdicts (
-                        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(8)))),
-                        run_date TEXT,
-                        run_crew TEXT,
-                        status TEXT,
-                        flags_json TEXT,
-                        audited_at TEXT DEFAULT (datetime('now'))
-                    );
-                """)
-                logger.info("hub.schema_initialized", source="inline_fallback")
-                
-            conn.commit()
-            conn.close()
-        except Exception as e:
-            logger.error("hub.sqlite_init_failed", error=str(e))
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.conn:
+            self.conn.commit()
+            self.conn.close()
 
-    def log_dlq(self, agent: str, task_id: str, payload_dict: dict, error_msg: str):
-        """Writes structural processing failures directly to the local audit ledger."""
-        try:
-            import json
-            conn = sqlite3.connect(self.db_path, timeout=10.0)
-            cursor = conn.cursor()
-            cursor.execute("""
-                INSERT INTO dead_letter_queue (agent_name, task_id, input_json, error)
-                VALUES (?, ?, ?, ?)
-            """, (agent, task_id, json.dumps(payload_dict), error_msg))
-            conn.commit()
-            conn.close()
-            logger.info("hub.dlq_logged", task_id=task_id)
-        except Exception as e:
-            logger.error("hub.dlq_log_failed", error=str(e))
+    def write_nexus_link(self, source_type, source_id, target_type, target_id, score=5):
+        """Standardized link method for the Nexus flywheel."""
+        self.conn.execute(
+            "INSERT INTO empire_nexus (source_type, source_id, target_type, target_id, insight_score) VALUES (?, ?, ?, ?, ?)",
+            (source_type, source_id, target_type, target_id, score)
+        )
+        logger.info(f"Nexus link recorded: {source_type} -> {target_type}")
 
-```
+# ── Verification Block ──
+if __name__ == "__main__":
+    with EmpireHub() as hub:
+        print("✅ Empire OS Hub initialized successfully.")
+        hub.write_nexus_link("Test", "001", "Test", "Module-01", 10)
+        print("✅ Nexus link test passed.")
