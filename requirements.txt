@@ -2,5 +2,4 @@ anthropic
 aiohttp
 python-dotenv
 structlog
-sqlite3
 Pillow
