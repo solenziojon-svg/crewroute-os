@@ -19,7 +19,7 @@ _pending =  # chat_id -> transcript
 
 class EmpireTelegramBot:
     def __init__(self):
-        self.token = os.getenv("TELEGRAM_BOT_TOKEN")
+        self.token = os.getenv("8976841353:AAGy9k-reyuOhegF8fvdVFJ9hftlsjB73Fg")
         self.openai_key = os.getenv("OPENAI_API_KEY")
         self.base_url = f"https://api.telegram.org/bot{self.token}"
         self.offset = 0
