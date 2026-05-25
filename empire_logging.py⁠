@@ -1,0 +1,23 @@
+from __future__ import annotations
+import os
+import structlog
+from structlog.contextvars import bind_contextvars, merge_contextvars
+from structlog.processors import TimeStamper, add_log_level, format_exc_info
+
+def configure_logging():
+    is_prod = bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("ENV") == "production")
+    processors = [merge_contextvars, add_log_level, TimeStamper(fmt="iso", utc=True), format_exc_info]
+    
+    structlog.configure(
+        processors=processors + ([structlog.processors.JSONRenderer()] if is_prod else [structlog.dev.ConsoleRenderer()]),
+        wrapper_class=structlog.stdlib.BoundLogger,
+        logger_factory=structlog.stdlib.LoggerFactory(),
+    )
+
+configure_logging()
+
+def get_logger(name: str):
+    return structlog.get_logger(name)
+
+def bind_context(**kwargs):
+    bind_contextvars(**kwargs)
