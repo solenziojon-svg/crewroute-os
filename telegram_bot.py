@@ -20,4 +20,4 @@ async def main():
     await app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main()
