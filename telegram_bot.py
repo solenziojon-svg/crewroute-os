@@ -11,27 +11,25 @@ if not TOKEN:
 
 BASE_URL = f"https://api.telegram.org/bot{TOKEN}"
 
-# Stream logging to standard output for Railway container collection
 logging.basicConfig(
-    level=logging.INFO, 
-    format="%(asctime)s [%(levelname)s] %(message)s", 
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
     stream=sys.stdout
 )
 logger = logging.getLogger("crewroute_bot")
 
-async def send_message(session: aiohttp.ClientSession, chat_id: int, text: str) -> None:
-    """Dispatches a text message using the shared session connection pool."""
-    url = f"{BASE_URL}/sendMessage"
-    payload = {"chat_id": chat_id, "text": text}
+async def send_message(session: aiohttp.ClientSession, chat_id: int, text: str):
     try:
-        async with session.post(url, json=payload, timeout=10) as resp:
+        async with session.post(
+            f"{BASE_URL}/sendMessage",
+            json={"chat_id": chat_id, "text": text}
+        ) as resp:
             if resp.status != 200:
-                logger.error(f"Failed to send message: HTTP {resp.status}")
+                logger.error(f"Failed to send message: {resp.status}")
     except Exception as e:
-        logger.error(f"Network error in send_message: {str(e)}")
+        logger.error(f"Error sending message: {e}")
 
-async def process_update(session: aiohttp.ClientSession, update: dict) -> None:
-    """Processes incoming messages and safely isolates media payloads."""
+async def process_update(session: aiohttp.ClientSession, update: dict):
     message = update.get("message")
     if not message:
         return
@@ -44,60 +42,51 @@ async def process_update(session: aiohttp.ClientSession, update: dict) -> None:
     voice = message.get("voice")
     photo = message.get("photo")
 
-    if voice:
-        file_id = voice.get("file_id")
-        logger.info(f"Voice log captured for chat {chat_id}: file_id={file_id}")
-        await send_message(session, chat_id, "🎙️ Voice log received. Processing optimization route...")
-        
+    if text == "/start":
+        await send_message(session, chat_id, 
+            "🚀 CrewRoute Bot is online.\n\n"
+            "Send me job notes as text, or a voice note + photo.")
+
+    elif voice:
+        # Voice note received
+        logger.info(f"Voice note received from chat {chat_id}")
+        await send_message(session, chat_id, 
+            "🎙️ Voice note logged successfully.")
+
     elif photo:
-        # Take the highest resolution version (last item in the photo array)
-        file_id = photo[-1].get("file_id")
-        logger.info(f"Photo captured for chat {chat_id}: file_id={file_id}")
-        await send_message(session, chat_id, "📸 Photo confirmation captured. Logging to operational hub...")
-        
-    elif text == "/start":
-        await send_message(session, chat_id, "🚀 CrewRoute Engine Online. Dispatch voice logs or photos to calculate paths.")
-        
+        # Photo received
+        logger.info(f"Photo received from chat {chat_id}")
+        await send_message(session, chat_id, 
+            "📸 Photo logged successfully.")
+
     elif text:
-        await send_message(session, chat_id, "✅ CrewRoute is online. Send me a voice note or photo to log a job.")
+        # Normal text / job notes
+        logger.info(f"Text note received from chat {chat_id}")
+        preview = text[:120] + "..." if len(text) > 120 else text
+        await send_message(session, chat_id, 
+            f"✅ Note logged successfully.\n\n{preview}")
 
 async def main():
-    logger.info("=========================================")
-    logger.info("🚀 Initializing CrewRoute Polling Engine...")
-    logger.info("=========================================")
-    
+    logger.info("🚀 CrewRoute Bot starting...")
+
     offset = 0
-    # Single session instantiation prevents socket leaks and handshake overhead
     async with aiohttp.ClientSession() as session:
         while True:
             try:
-                # 30-second long polling timeout keeps resource utilization minimal
-                url = f"{BASE_URL}/getUpdates?offset={offset}&timeout=30"
-                async with session.get(url, timeout=35) as resp:
+                url = f"{BASE_URL}/getUpdates?offset={offset}&timeout=20"
+                async with session.get(url, timeout=25) as resp:
                     if resp.status != 200:
-                        logger.warning(f"Telegram API warning: HTTP status {resp.status}. Backing off...")
                         await asyncio.sleep(5)
                         continue
-                        
+
                     data = await resp.json()
-                    updates = data.get("result", [])
-                    
-                    for update in updates:
+                    for update in data.get("result", []):
                         offset = update.get("update_id", 0) + 1
                         await process_update(session, update)
-                        
-            except asyncio.CancelledError:
-                logger.info("Shutdown signal acknowledged. Terminating cleanly.")
-                break
-            except aiohttp.ClientError as ce:
-                logger.error(f"Transport network loss: {str(ce)}. Retrying in 5s...")
-                await asyncio.sleep(5)
+
             except Exception as e:
-                logger.error(f"Unexpected runtime exception caught: {str(e)}")
-                await asyncio.sleep(2)
+                logger.error(f"Error in polling loop: {e}")
+                await asyncio.sleep(3)
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("Engine shutdown by operator.")
+    asyncio.run(main())
