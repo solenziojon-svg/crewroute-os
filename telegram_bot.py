@@ -1,32 +1,41 @@
 import os
 import asyncio
-import aiohttp
+from telegram import Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-BASE_URL = f"https://api.telegram.org/bot{TOKEN}"
 
-async def send_message(chat_id, text):
-    async with aiohttp.ClientSession() as session:
-        await session.post(f"{BASE_URL}/sendMessage", json={"chat_id": chat_id, "text": text})
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "✅ <b>CrewRoute Bot Online</b>\n\n"
+        "Send me a voice note + photo, or just text to log a job.",
+        parse_mode="HTML"
+    )
+
+async def handle_job(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.message
+    text = message.text or ""
+    chat_id = message.chat_id
+
+    await message.reply_text("✅ Job received. Logging now...")
+
+    # Simple acknowledgment for now
+    summary = f"Job logged for client.\n\n{text[:100]}..." if text else "Voice note or photo received."
+    await message.reply_text(f"📝 {summary}")
 
 async def main():
-    print("🤖 CrewRoute Bot is running...")
+    if not TOKEN:
+        print("❌ No TELEGRAM_BOT_TOKEN found!")
+        return
+
+    print("🤖 CrewRoute Bot started successfully")
+
+    app = Application.builder().token(TOKEN).build()
     
-    offset = 0
-    async with aiohttp.ClientSession() as session:
-        while True:
-            try:
-                async with session.get(f"{BASE_URL}/getUpdates?offset={offset}&timeout=5") as resp:
-                    data = await resp.json()
-                    for update in data.get("result", []):
-                        offset = update.get("update_id", 0) + 1
-                        message = update.get("message")
-                        if message:
-                            chat_id = message.get("chat", {}).get("id")
-                            await send_message(chat_id, "✅ Bot is online. Send me a voice note or photo.")
-            except:
-                pass
-            await asyncio.sleep(1)
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT | filters.VOICE | filters.PHOTO, handle_job))
+
+    await app.run_polling()
 
 if __name__ == "__main__":
     asyncio.run(main())
