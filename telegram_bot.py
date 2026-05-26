@@ -6,35 +6,30 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "✅ <b>CrewRoute Bot Online</b>\n\n"
-        "Send me a voice note + photo, or just text to log a job.",
-        parse_mode="HTML"
-    )
+    await update.message.reply_text("✅ Bot is online.\nSend me a voice note, photo, or text to log a job.")
 
-async def handle_job(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
-    text = message.text or ""
-    chat_id = message.chat_id
-
-    await message.reply_text("✅ Job received. Logging now...")
-
-    # Simple acknowledgment for now
-    summary = f"Job logged for client.\n\n{text[:100]}..." if text else "Voice note or photo received."
-    await message.reply_text(f"📝 {summary}")
+    
+    if message.text:
+        text = message.text.strip()
+        await message.reply_text(f"📝 Received:\n{text[:150]}...")
+    elif message.voice or message.photo:
+        await message.reply_text("🎙️📸 Received media. Job logged.")
+    else:
+        await message.reply_text("✅ Got your message.")
 
 async def main():
     if not TOKEN:
         print("❌ No TELEGRAM_BOT_TOKEN found!")
         return
-
+        
     print("🤖 CrewRoute Bot started successfully")
-
-    app = Application.builder().token(TOKEN).build()
     
+    app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT | filters.VOICE | filters.PHOTO, handle_job))
-
+    app.add_handler(MessageHandler(filters.ALL, handle_message))
+    
     await app.run_polling()
 
 if __name__ == "__main__":
