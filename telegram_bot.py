@@ -1,23 +1,22 @@
 import os
 import asyncio
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+import aiohttp
+from datetime import datetime
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+BASE_URL = f"https://api.telegram.org/bot{TOKEN}"
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("✅ Bot is online.\nSend me a voice note + photo of a job.")
+async def send_message(chat_id, text):
+    async with aiohttp.ClientSession() as session:
+        await session.post(f"{BASE_URL}/sendMessage", json={"chat_id": chat_id, "text": text})
 
 async def main():
-    if not TOKEN:
-        print("❌ TELEGRAM_BOT_TOKEN is missing!")
-        return
-        
-    print("🤖 Starting bot...")
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
+    print("🤖 Minimal bot starting...")
+    print(f"Token exists: {bool(TOKEN)}")
     
-    await app.run_polling(allowed_updates=Update.ALL_TYPES)
+    # Test that we can at least start
+    await send_message(123456789, "Test message - bot is running")
+    print("Bot started successfully")
 
 if __name__ == "__main__":
-    asyncio.run(main()
+    asyncio.run(main())
