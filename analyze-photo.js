@@ -7,25 +7,62 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { image } = req.body;
+    const { image, mediaType = "image/jpeg" } = req.body;
 
     if (!image) {
       return res.status(400).json({ error: "No image provided" });
     }
 
-    // For now, return a simple response so we know it works
-    const result = {
-      success: true,
-      message: "Photo received successfully",
-      square_footage: 6500,
-      condition: "maintained",
-      quality_score: 8,
-      note: "This is a test response. Real Claude Vision coming next."
-    };
+    // Call Claude Vision
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": config.anthropicApiKey,
+        "anthropic-version": "2023-06-01"
+      },
+      body: JSON.stringify({
+        model: "claude-3-5-sonnet-20241022",
+        max_tokens: 600,
+        messages: [{
+          role: "user",
+          content: [
+            {
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: mediaType,
+                data: image
+              }
+            },
+            {
+              type: "text",
+              text: "You are a landscaping job auditor. Analyze this photo and return ONLY valid JSON with these fields: quality (score 1-10, status, notes), work_completed (array of services), upsell (detected, description, estimated_value), and a short raw_description."
+            }
+          ]
+        }]
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error("Claude API error");
+    }
+
+    const data = await response.json();
+    const text = data.content?.[0]?.text || "{}";
+    
+    // Clean and parse the JSON response from Claude
+    let result;
+    try {
+      result = JSON.parse(text.replace(/```json|```/g, "").trim());
+    } catch {
+      result = { error: "Could not parse Claude response" };
+    }
 
     res.status(200).json(result);
 
   } catch (error) {
-    res.status(500).json({ error: "Server error", message: error.message });
+    console.error(error);
+    res.status(500).json({ error: "Analysis failed", message: error.message });
   }
 }
