@@ -1,0 +1,96 @@
+import { createClient } from '@supabase/supabase-js';
+import { NextResponse } from 'next/server';
+
+// Initialize Supabase client with environment variables
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!; // Service role bypasses RLS for backend operations
+const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+export async function POST(request: Request) {
+  try {
+    const formData = await request.formData();
+    const file = formData.get('file') as File;
+    const clientId = formData.get('client_id') as string;
+    const estimatedSqft = parseFloat(formData.get('sqft') as string || '0');
+
+    if (!file || !clientId) {
+      return NextResponse.json({ error: 'Missing required file or client_id' }, { status: 400 });
+    }
+
+    // 1. Initialize Job Record in Supabase
+    const { data: job, error: jobError } = await supabase
+      .from('jobs')
+      .insert({
+        client_id: clientId,
+        status: 'pending',
+        sqft: estimatedSqft
+      })
+      .select()
+      .single();
+
+    if (jobError) throw jobError;
+
+    // 2. Upload Photo to the 'job-assets' Storage Bucket
+    const fileExt = file.name.split('.').pop();
+    const fileName = `${job.id}/${Date.now()}_before.${fileExt}`;
+    
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    const { data: storageData, error: storageError } = await supabase.storage
+      .from('job-assets')
+      .upload(fileName, buffer, {
+        contentType: file.type,
+        upsert: true,
+      });
+
+    if (storageError) throw storageError;
+
+    // Get public URL for the uploaded photo
+    const { data: { publicUrl } } = supabase.storage
+      .from('job-assets')
+      .getPublicUrl(fileName);
+
+    // 3. Log Photo Asset into the job_photos table
+    const { error: photoError } = await supabase
+      .from('job_photos')
+      .insert({
+        job_id: job.id,
+        storage_url: publicUrl,
+        photo_type: 'before'
+      });
+
+    if (photoError) throw photoError;
+
+    // 4. Run Pricing Engine v0.3 Calibration
+    // Formula: Base Hours = SqFt / 1600 | Labor = Base Hours * $65/hr | Target Price = Labor / (1 - 0.35)
+    const baseHours = estimatedSqft / 1600;
+    const laborCost = baseHours * 65;
+    const targetPrice = laborCost / (1 - 0.35);
+
+    // 5. Update Job with Final Calculated Estimate
+    const { data: updatedJob, error: updateError } = await supabase
+      .from('jobs')
+      .update({
+        base_hours: parseFloat(baseHours.toFixed(2)),
+        estimated_price: parseFloat(targetPrice.toFixed(2)),
+        status: 'scheduled'
+      })
+      .where('id', '==', job.id) // Adjusted syntax representation for client usage
+      .select()
+      .single();
+
+    if (updateError) throw updateError;
+
+    return NextResponse.json({
+      success: true,
+      job_id: updatedJob.id,
+      base_hours: updatedJob.base_hours,
+      estimated_price: updatedJob.estimated_price,
+      photo_url: publicUrl
+    }, { status: 200 });
+
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
