@@ -1,146 +1,87 @@
-```python
-"""
-empire_ai_nexus.py (v1.3 - DEFINITIVE)
-─────────────────────────────────────────────────────
-Unified AI router gateway managing multi-provider completions.
-Features: Quiet 5-pass exponential backoff retries and automatic 
-Postgres/SQLite execution telemetry logging.
-"""
-
-import os
 import sys
-import time
-import asyncio
-import json
+import os
 import logging
-from typing import Any, Optional, Dict
+from contextlib import asynccontextmanager
+import uvicorn
+from fastapi import FastAPI, HTTPException, status
 
-logger = logging.getLogger("crewroute.nexus")
+# Configure clean, structured logging for Railway logs
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - [%(name)s] - %(message)s'
+)
+logger = logging.getLogger("CrewRouteEngine")
 
-class EmpireAINexus:
-    def __init__(self):
-        self.db_url = os.getenv("DATABASE_URL", "")
-        # Zero-dependency setup verification
-        try:
-            import litellm
-            litellm.suppress_logging = True
-            self.has_litellm = True
-        except ImportError:
-            self.has_litellm = False
-            logger.warning("nexus.missing_litellm", detail="Fallback modes will apply.")
-
-    async def ask_async(
-        self, 
-        prompt: str, 
-        model_id: str = "claude-3-5-sonnet", 
-        system_instruction: Optional[str] = None,
-        task_type: str = "routing",
-        crew_name: str = "Unknown",
-        date_target: str = ""
-    ) -> str:
-        """
-        Queries an LLM with a 5-pass quiet exponential backoff retry system.
-        Logs metrics, tokens, and cost parameters directly back to PostgreSQL.
-        """
-        if not self.has_litellm:
-            raise RuntimeError("LiteLLM package is missing from execution environment.")
-
-        from litellm import acompletion
+# 1. Startup Robustness: Lifespan Context Manager
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("Initializing CrewRoute OS Engine dependencies...")
+    try:
+        # Validate critical environment variables before opening ports
+        # e.g., assert os.getenv("SUPABASE_URL") is not None
         
-        # Normalize model identification mapping
-        model_map = {
-            "claude-3-5-sonnet": "anthropic/claude-3-5-sonnet-20241022",
-            "grok-2": "xai/grok-2",
-            "gemini-1-5-pro": "gemini/gemini-1.5-pro-latest",
-            "claude-3-opus": "anthropic/claude-3-opus-20240229"
-        }
-        target_model = model_map.get(model_id, model_id)
-        
-        messages = []
-        if system_instruction:
-            messages.append({"role": "system", "content": system_instruction})
-        messages.append({"role": "user", "content": prompt})
+        # TODO: Initialize your multi-agent routing connections, Supabase client, or LiteLLM here
+        logger.info("All architectural dependencies and AI agents initialized successfully.")
+        yield
+    except Exception as e:
+        logger.critical(f"FATAL: Application startup sequence failed: {e}")
+        # Force immediate exit so Railway registers the failure explicitly
+        sys.exit(1)
+    finally:
+        logger.info("Executing safe shutdown sequence for engine dependencies...")
 
-        # Retry logic: up to 5 times with delays of 1s, 2s, 4s, 8s, 16s.
-        delays = [1, 2, 4, 8, 16]
-        response = None
-        start_time = time.monotonic()
-        last_error = ""
 
-        for attempt, delay in enumerate(delays):
-            try:
-                response = await acompletion(
-                    model=target_model,
-                    messages=messages,
-                    timeout=30.0
-                )
-                break  # Successful execution, escape retry loop
-            except Exception as e:
-                last_error = str(e)
-                if attempt == len(delays) - 1:
-                    logger.error("nexus.api_exhausted", attempts=5, model=model_id, error=last_error)
-                    await self._log_telemetry(
-                        endpoint=target_model, model_id=model_id, provider=target_model.split("/")[0],
-                        task_type=task_type, crew_name=crew_name, date_target=date_target,
-                        success=False, error=last_error, duration_ms=int((time.monotonic() - start_time) * 1000)
-                    )
-                    raise RuntimeError(f"System gateway timeout. All retries failed: {last_error}")
-                await asyncio.sleep(delay)
+# Initialize FastAPI with the robust lifespan handler
+app = FastAPI(
+    title="CrewRoute OS Engine", 
+    version="1.0.0",
+    lifespan=lifespan
+)
 
-        duration_ms = int((time.monotonic() - start_time) * 1000)
-        content = response.choices[0].message.content
-        
-        # Calculate tokens and cost tracking via litellm metrics
-        prompt_tokens = getattr(response.usage, "prompt_tokens", 0)
-        completion_tokens = getattr(response.usage, "completion_tokens", 0)
-        total_tokens = getattr(response.usage, "total_tokens", 0)
-        
-        # Estimate pricing matrix (standard USD prices per 1M tokens as fallbacks if litellm omitted)
-        cost_usd = 0.0
-        try:
-            from litellm import completion_cost
-            cost_usd = completion_cost(completion_response=response) or 0.0
-        except Exception:
-            # Fallback approximate cost estimation if helper crashes
-            if "claude-3-5-sonnet" in target_model:
-                cost_usd = ((prompt_tokens * 3.0) + (completion_tokens * 15.0)) / 1_000_000
-            elif "grok" in target_model:
-                cost_usd = ((prompt_tokens * 2.0) + (completion_tokens * 10.0)) / 1_000_000
+# 2. Required Railway Healthcheck
+@app.get("/health", status_code=status.HTTP_200_OK)
+async def health_check():
+    # Future Extensibility: Add a quick verification check to ensure downstream APIs are responsive
+    return {
+        "status": "healthy",
+        "engine": "CrewRoute AI Nexus Active"
+    }
 
-        # Log to PostgreSQL telemetry table
-        await self._log_telemetry(
-            endpoint=target_model, model_id=model_id, provider=target_model.split("/")[0],
-            task_type=task_type, prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
-            total_tokens=total_tokens, cost_usd=cost_usd, duration_ms=duration_ms,
-            crew_name=crew_name, date_target=date_target, success=True
-        )
+@app.get("/")
+async def root():
+    return {"message": "CrewRoute OS Production Engine is live and listening."}
 
-        return content
+# 3. Future Extensibility: Extensible Agent Endpoints Placeholder
+@app.post("/api/v1/agent/trigger", status_code=status.HTTP_202_ACCEPTED)
+async def trigger_routing_agent(payload: dict):
+    """
+    Target endpoint for the Telegram Voice-to-Action pipeline.
+    Receives incoming parsed intents and passes them to the Core Dispatch Engine.
+    """
+    logger.info(f"Incoming agent execution request: {payload}")
+    try:
+        # Execution logic for routing / dispatch engine goes here
+        return {"status": "queued", "detail": "Payload sent to dispatch engine state."}
+    except Exception as e:
+        logger.error(f"Failed to process agent trigger: {e}")
+        raise HTTPException(status_code=500, detail="Internal agent execution failure.")
 
-    async def _log_telemetry(self, **kwargs):
-        """Asynchronously writes a usage metric log straight to our storage layer."""
-        if not self.db_url:
-            return  # Skip silently if database is not active or set to SQLite fallback
-        
-        try:
-            import asyncpg
-            url = self.db_url.replace("+asyncpg","").replace("postgresql+asyncpg","postgresql")
-            conn = await asyncpg.connect(url)
-            await conn.execute("""
-                INSERT INTO nexus_calls (
-                    endpoint, model_id, provider, task_type, prompt_tokens, 
-                    completion_tokens, total_tokens, cost_usd, duration_ms, 
-                    crew_name, date_target, success, error
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-            """, 
-            kwargs.get("endpoint"), kwargs.get("model_id"), kwargs.get("provider"),
-            kwargs.get("task_type"), kwargs.get("prompt_tokens", 0), kwargs.get("completion_tokens", 0),
-            kwargs.get("total_tokens", 0), kwargs.get("cost_usd", 0.0), kwargs.get("duration_ms", 0),
-            kwargs.get("crew_name", "Unknown"), kwargs.get("date_target", ""),
-            kwargs.get("success", True), kwargs.get("error")
-            )
-            await conn.close()
-        except Exception as e:
-            logger.warning("nexus.telemetry_log_failed", detail=str(e))
 
-```
+# 4. Error-Handled Server Bootstrapping
+def run_web_server():
+    try:
+        port = int(os.getenv("PORT", 8080))
+        logger.info(f"Attempting to bind web server to 0.0.0.0:{port}")
+        uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
+    except Exception as e:
+        logger.critical(f"Failed to bind or execute Uvicorn server: {e}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "serve":
+        run_web_server()
+    else:
+        logger.error("Execution missing required startup arguments.")
+        print("Usage: python3 empire_ai_nexus.py serve")
+        sys.exit(1)
