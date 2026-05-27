@@ -1,0 +1,27 @@
+# CrewRoute Knowledge Base Schema & Governance
+Last Health Check: [DATE] | System Integrity Status: ACTIVE
+
+## 1. Active Workspace Registry
+| Page | Context Focus | Last Updated | Status |
+|------|---------------|--------------|--------|
+| [[wiki/routing-patterns.md]] | Geo-constraints, OR-Tools penalties, I-5 clustering | [DATE] | Operational |
+| [[wiki/pricing-formulas.md]] | v0.3 engine, material markups, margin tracking | [DATE] | Operational |
+| [[wiki/client-intelligence.md]] | Personas, gate access protocols, compliance prep | [DATE] | Operational |
+| [[wiki/crew-performance.md]] | Truck portal logs, site photo-validation, SOPs | [DATE] | Operational |
+| [[wiki/empire-synergies.md]] | Flywheel logic: CJS Ops -> CrewRoute SaaS -> Magic Layer | [DATE] | Operational |
+
+## 2. Auto-Research & Loop Logging
+Track execution anomalies, optimization tests, and algorithmic updates here.
+| Date | Component | Discovered Friction / Failure Mode | KB Modification Link |
+|------|-----------|------------------------------------|----------------------|
+| 2026-05-27 | OR-Tools | Maps API cost-bloat during dense loops | [[wiki/routing-patterns]] (Added Caching) |
+
+## 3. Multi-Tiered Governance Protocols
+### Weekly Agent Scan (Automated at start of build sessions)
+- Verify that any technical updates made to the codebase match the architectural parameters defined in `crewroute-claude.md`.
+- Ensure new API routes or data mutations align perfectly with the Supabase schema layers.
+
+### Monthly Deep Health Check (Manual Repository Audit)
+- Check for discrepancies between the pricing formulas active in production and the v0.3 wiki spec.
+- Flag any raw logs older than 30 days that have not been synthesized into a wiki pattern.
+- Purge redundant files or unindexed assets inside the storage tracking indexes.
