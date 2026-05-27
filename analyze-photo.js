@@ -13,7 +13,6 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "No image provided" });
     }
 
-    // Call Claude Vision
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
@@ -23,7 +22,7 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         model: "claude-3-5-sonnet-20241022",
-        max_tokens: 600,
+        max_tokens: 700,
         messages: [{
           role: "user",
           content: [
@@ -37,7 +36,7 @@ export default async function handler(req, res) {
             },
             {
               type: "text",
-              text: "You are a landscaping job auditor. Analyze this photo and return ONLY valid JSON with these fields: quality (score 1-10, status, notes), work_completed (array of services), upsell (detected, description, estimated_value), and a short raw_description."
+              text: "You are a professional landscaping job auditor. Analyze this photo and return ONLY valid JSON with these exact fields: quality (score 1-10, status, notes), work_completed (array), upsell (detected, description, estimated_value), raw_description, square_footage, condition, and obstruction."
             }
           ]
         }]
@@ -45,18 +44,17 @@ export default async function handler(req, res) {
     });
 
     if (!response.ok) {
-      throw new Error("Claude API error");
+      throw new Error("Claude Vision API failed");
     }
 
     const data = await response.json();
     const text = data.content?.[0]?.text || "{}";
-    
-    // Clean and parse the JSON response from Claude
+
     let result;
     try {
       result = JSON.parse(text.replace(/```json|```/g, "").trim());
     } catch {
-      result = { error: "Could not parse Claude response" };
+      result = { error: "Failed to parse Claude response" };
     }
 
     res.status(200).json(result);
