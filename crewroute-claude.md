@@ -1,50 +1,50 @@
 # CrewRoute AI OS — Behavioral System Rules
 
-This file governs all LLM reasoning, code generation, and file-editing behaviors for CrewRoute OS. Load this file before initiating any session.
+This file governs all LLM reasoning, code generation, and file-editing behaviors for CrewRoute OS. Load this file at the start of every session.
 
-## The 4 Karpathy Principles of AI Orchestration
+## Core Behavioral Rules
 
-1. **Think Before Coding**  
-   State assumptions explicitly. Surface confusion or missing information. Present multiple interpretations when ambiguous. Push back if a simpler approach exists.
+1. **Architectural Thinking**  
+   Prioritize modularity, long-term leverage, and moat-building. Think in systems, not just features.
 
-2. **Simplicity First**  
-   Deliver the minimal solution that meets the stated goal. No unrequested features, abstractions, or speculative flexibility. Prefer clean, readable code.
+2. **Data Integrity**  
+   Never hallucinate formulas or constraints. Always reference `/knowledge-base/wiki/` files first.
 
-3. **Surgical Changes**  
-   Touch only the code directly required by the current request. Match existing style and patterns. Remove only code made unused by your change.
+3. **Compact Feedback**  
+   Be direct, no-fluff, and actionable. Avoid padding or overly verbose explanations.
 
-4. **Goal-Driven Execution**  
-   Convert requests into clear, verifiable success criteria. Enable autonomous looping toward measurable outcomes rather than step-by-step instructions.
+4. **Auto-Research Loop**  
+   Check relevant wiki pages and raw data before proposing solutions. Validate assumptions against real field data.
 
-## Domain-Specific Guardrails
+## Financial Engine (v0.3) — Non-Negotiable
 
-### Pricing Model Integrity (v0.3)
-Strictly enforce the following formulas:
-- **Base Hours** = lawn/hardscape square footage ÷ 1,600
-- **Base Cost** = Base Hours × $65.00 (standard labor rate)
-- **Total Contract Price** = Base Cost ÷ (1 - 0.35) → enforces 35% target margin
+- **Base Labor Rate**: $65/hr
+- **Target Margin**: 35%
+- **Estimating Formula**:  
+  `Base Hours = SqFt / 1600`  
+  `Base Cost = Base Hours × $65`  
+  `Total Price = Base Cost / (1 - 0.35)`
+- **Commercial Upsell Target**: 1.54x material markup
 
-### SaaS Architecture Boundaries
-- **CrewRoute (Entry-Level / Commercial)**: Target 1–5 truck operations.  
-  Solo tier = $79/mo, Crew tier = $149/mo. No per-user licensing. Includes HVAC flat-rate pricebook. QuickBooks Online sync in active development.
-- **CrewRoute Pro (Professional)**: Designed for multi-truck operations. Includes Office Control Panel (drag-and-drop dispatch), iPad-optimized Truck Portal with live job timers, photo proof of completion, employee PTO self-service, and QuickBooks-ready CSV exports.
-- **Landscape Friend (Custom/Internal SaaS)**: Built on Vercel + Next.js SSR, Neon serverless PostgreSQL, Clerk authentication, Resend for invoicing, Vercel Blobs for storage, and Google Maps API for route optimization and spatial geocoding.
+## Operational Constraints
 
-### CJS Operational Rules
-- Maintain phone-first workflows (photo capture → instant estimate → job logging).
-- Respect asset hierarchy: Properties → Routes/Crews → Equipment/Tasks.
-- All routing and scheduling logic must support measurable improvements in jobs per day and drive time reduction.
-- Future government/VA contract work requires strong auditability, GPS tracking, and compliance logging.
+- **Pacific Beach (PB)**: High-density properties, solo crews, tight 07:00–09:00 arrival windows, parking challenges.
+- **North County**: Wider transit areas, multi-crew potential, I-5 corridor clustering opportunities.
+- **Safety & Compliance**: All field operations must eventually align with OSHA standards and VA prevailing wage requirements for government work.
 
-## Active Directives
+## Tech Stack & Integration Rules
 
-- If the user says **"Ingest [file]"** or drops new material into `raw-resources/`: Run the Bootstrap Protocol (`knowledge-base/bootstrap-prompt.txt`).
-- If the user asks for code: Ensure full compatibility with modern JavaScript/TypeScript standards unless legacy CommonJS is explicitly required.
-- If the user asks for a wiki update: Make edits surgically, preserve existing `[[wiki/page-name]]` cross-references, and update `knowledge-base/schema.md`.
-- Before ending any session: Document what was built, update relevant wiki pages if needed, and log session notes in `knowledge-base/raw-resources/chat-exports/`.
+- **Data Layer**: Supabase (Postgres) is the single source of truth for jobs, estimates, photos, and clients.
+- **Mapping & Routing**: Google Maps API + OR-Tools for optimization.
+- **Knowledge System**: Obsidian-compatible Markdown in `/knowledge-base/`.
+- **Photo Pipeline**: Field photos must flow into structured job records with proof-of-work capability.
 
-## Context Loading Instruction
+## Phase 1 Priorities (Deadline: June 10)
 
-At the start of every session, the following instruction must be used:
+- Knowledge base populated with initial field logs and operational data.
+- Supabase photo-upload integration (Proof of Work engine).
+- Daily AI OS habit established (this file + relevant wiki pages loaded at start of every session).
 
-"Load `crewroute-claude.md` from the root and read the relevant pages from `knowledge-base/wiki/` before we begin. Follow all behavioral rules and pricing formulas strictly."
+## Session Protocol (Mandatory)
+
+At the beginning of every session with Claude or Grok, use this command:
