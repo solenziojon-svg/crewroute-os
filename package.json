@@ -1,44 +1,24 @@
+```json
 {
   "name": "crewroute-os",
-  "version": "0.3.0",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "lint": "next lint"
   },
   "dependencies": {
-    "next": "15.3.0",
-    "react": "^18.3.0",
-    "react-dom": "^18.3.0",
-    "@anthropic-ai/sdk": "^0.27.0"
+    "next": "15.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
-    "@types/node": "^20",
-    "@types/react": "^18",
-    "@types/react-dom": "^18",
-    "typescript": "^5"
+    "eslint": "^8.57.0",
+    "eslint-config-next": "15.0.0",
+    "typescript": "^5.0.0"
   }
 }
-{
-  "name": "crewroute-os",
-  "version": "0.3.0",
-  "private": true,
-  "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start"
-  },
-  "dependencies": {
-    "next": "15.3.0",
-    "react": "^18.3.0",
-    "react-dom": "^18.3.0",
-    "@anthropic-ai/sdk": "^0.27.0"
-  },
-  "devDependencies": {
-    "@types/node": "^20",
-    "@types/react": "^18",
-    "@types/react-dom": "^18",
-    "typescript": "^5"
-  }
-}
+
+```
